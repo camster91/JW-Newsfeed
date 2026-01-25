@@ -37,20 +37,21 @@ def load_history():
     """Load previously processed items from history file."""
     try:
         with open(HISTORY_FILE) as f:
-            return json.load(f)
+            return set(json.load(f))
     except (FileNotFoundError, json.JSONDecodeError):
-        return []
+        return set()
 
 
 def save_history(history):
     """Save processed items to history file."""
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(history, f, ensure_ascii=False, indent=4)
+        json.dump(list(history), f, ensure_ascii=False, indent=4)
 
 
 def scrape_videos(driver, history):
-    """Scrape latest videos from JW.ORG."""
+    """Scrape latest videos from JW.ORG. Returns all videos and count of new ones."""
     videos_list = []
+    new_count = 0
 
     driver.get('https://www.jw.org/en/library/videos/#en/categories/LatestVideos')
     WebDriverWait(driver, 60).until(
@@ -68,24 +69,29 @@ def scrape_videos(driver, history):
             text = link.find_all('a', {'class': 'jsNoScroll'})[1].text
             image = link.img['src']
 
-            if href not in history:
-                videos_list.append({
-                    'title': text,
-                    'link': href,
-                    'image': image,
-                    'category': 'video'
-                })
-                history.append(href)
+            is_new = href not in history
+            if is_new:
+                history.add(href)
+                new_count += 1
+
+            videos_list.append({
+                'title': text,
+                'link': href,
+                'image': image,
+                'category': 'video',
+                'is_new': is_new
+            })
         except (KeyError, IndexError, AttributeError):
             continue
 
-    return videos_list
+    return videos_list, new_count
 
 
 def scrape_books(driver, history):
-    """Scrape latest books from JW.ORG."""
+    """Scrape latest books from JW.ORG. Returns all books and count of new ones."""
     book_list = []
     pics_list = []
+    new_count = 0
 
     driver.get('https://www.jw.org/en/library/books')
     WebDriverWait(driver, 60).until(
@@ -94,65 +100,68 @@ def scrape_books(driver, history):
 
     soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-    for link in soup.find_all("div", {"class": "publicationDesc"}):
-        try:
-            href = "https://www.jw.org" + link.a['href']
-            title = link.text.strip()
-
-            if href not in history:
-                book_list.append({
-                    'title': title,
-                    'link': href,
-                    'category': 'book'
-                })
-                history.append(href)
-        except (KeyError, AttributeError):
-            continue
-
-    # Get book cover images
+    # Get book cover images first
     for pic in soup.find_all("div", {"class": "cvr-wrapper"}):
         try:
             pics_list.append(pic.img['src'])
         except (KeyError, AttributeError):
             continue
 
-    # Associate images with books
-    for idx, book in enumerate(book_list):
-        if idx < len(pics_list):
-            book['image'] = pics_list[idx]
-        else:
-            book['image'] = ''
+    for idx, link in enumerate(soup.find_all("div", {"class": "publicationDesc"})):
+        try:
+            href = "https://www.jw.org" + link.a['href']
+            title = link.text.strip()
 
-    return book_list
+            is_new = href not in history
+            if is_new:
+                history.add(href)
+                new_count += 1
+
+            book_list.append({
+                'title': title,
+                'link': href,
+                'image': pics_list[idx] if idx < len(pics_list) else '',
+                'category': 'book',
+                'is_new': is_new
+            })
+        except (KeyError, AttributeError):
+            continue
+
+    return book_list, new_count
 
 
 def scrape_news(history):
-    """Scrape latest news from JW.ORG RSS feed."""
+    """Scrape latest news from JW.ORG RSS feed. Returns all news and count of new ones."""
     news_list = []
+    new_count = 0
 
     feed = feedparser.parse('https://www.jw.org/en/whats-new/rss/WhatsNewWebArticles/feed.xml')
 
     for entry in feed.entries:
         news_link = entry.link
 
-        if news_link not in history:
-            # Try to extract image from summary
-            try:
-                news_img = entry.summary.split('=')[3].split(' ')[0].replace('"', '')
-            except (IndexError, AttributeError):
-                news_img = ''
+        # Try to extract image from summary
+        try:
+            news_img = entry.summary.split('=')[3].split(' ')[0].replace('"', '')
+        except (IndexError, AttributeError):
+            news_img = ''
 
-            news_list.append({
-                'title': entry.title,
-                'link': news_link,
-                'image': news_img,
-                'category': 'news',
-                'description': getattr(entry, 'summary', ''),
-                'pub_date': getattr(entry, 'published', '')
-            })
-            history.append(news_link)
+        is_new = news_link not in history
+        if is_new:
+            history.add(news_link)
+            new_count += 1
 
-    return news_list
+        news_list.append({
+            'title': entry.title,
+            'link': news_link,
+            'image': news_img,
+            'category': 'news',
+            'description': getattr(entry, 'summary', ''),
+            'pub_date': getattr(entry, 'published', ''),
+            'is_new': is_new
+        })
+
+    return news_list, new_count
 
 
 def generate_rss_feed(videos, books, news):
@@ -249,12 +258,12 @@ def main():
     try:
         # Scrape content
         print("Scraping latest videos...")
-        videos = scrape_videos(driver, history)
-        print(f"Found {len(videos)} new videos")
+        videos, new_videos = scrape_videos(driver, history)
+        print(f"Found {len(videos)} videos ({new_videos} new)")
 
         print("Scraping latest books...")
-        books = scrape_books(driver, history)
-        print(f"Found {len(books)} new books")
+        books, new_books = scrape_books(driver, history)
+        print(f"Found {len(books)} books ({new_books} new)")
 
     finally:
         if driver:
@@ -262,13 +271,13 @@ def main():
 
     # Scrape news (doesn't need Selenium)
     print("Scraping latest news...")
-    news = scrape_news(history)
-    print(f"Found {len(news)} new articles")
+    news, new_news = scrape_news(history)
+    print(f"Found {len(news)} articles ({new_news} new)")
 
     # Save updated history
     save_history(history)
 
-    # Generate RSS feed
+    # Generate RSS feed with ALL items (not just new ones)
     print("Generating RSS feed...")
     rss = generate_rss_feed(videos, books, news)
 
@@ -278,7 +287,8 @@ def main():
         f.write(xml_content)
 
     print(f"RSS feed saved to: {OUTPUT_FILE}")
-    print(f"Total new items: {len(videos) + len(books) + len(news)}")
+    print(f"Total items in feed: {len(videos) + len(books) + len(news)}")
+    print(f"New items: {new_videos + new_books + new_news}")
 
 
 if __name__ == '__main__':
