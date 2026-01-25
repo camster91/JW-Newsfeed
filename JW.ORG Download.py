@@ -17,9 +17,10 @@ from selenium.common.exceptions import (
     SessionNotCreatedException
 )
 
-# Constants
-URLS_FILE = "C:\\Python JW News\\urls_and_titles.txt"
-TARGET_DIRECTORY = "D:\\JW.ORG"
+# Configuration - use environment variables or defaults
+DATA_DIR = os.environ.get('JW_DATA_DIR', os.path.dirname(os.path.abspath(__file__)))
+URLS_FILE = os.environ.get('JW_URLS_FILE', os.path.join(DATA_DIR, 'urls_and_titles.txt'))
+TARGET_DIRECTORY = os.environ.get('JW_DOWNLOAD_DIR', os.path.join(os.path.expanduser('~'), 'JW.ORG'))
 MAX_RETRIES = 3
 
 # Configure logging
@@ -174,9 +175,6 @@ def main():
                 continue  # Skip to the next video
 
             process_video(driver, title, target_folder, session, MAX_RETRIES)
-
-            # After processing the video, stop further processing of other videos and move to the next URL
-            break  # Move to the next URL after processing the first video
 
         driver.quit()  # Ensure the driver quits after processing videos for each URL
 
