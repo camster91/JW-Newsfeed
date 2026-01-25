@@ -14,14 +14,23 @@ from xml.dom import minidom
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import WebDriverException
 from bs4 import BeautifulSoup
 from selenium import webdriver
+
+try:
+    from webdriver_manager.chrome import ChromeDriverManager
+    USE_WEBDRIVER_MANAGER = True
+except ImportError:
+    USE_WEBDRIVER_MANAGER = False
 
 # Configuration - use environment variables or defaults
 DATA_DIR = os.environ.get('JW_DATA_DIR', os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.environ.get('JW_OUTPUT_DIR', os.path.dirname(os.path.abspath(__file__)))
 HISTORY_FILE = os.path.join(DATA_DIR, 'history.json')
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'jw_feed.xml')
+FEED_URL = os.environ.get('JW_FEED_URL', 'https://example.com/jw_feed.xml')
 
 
 def load_history():
@@ -165,7 +174,7 @@ def generate_rss_feed(videos, books, news):
 
     # Add atom:link for feed URL (self-reference)
     atom_link = ET.SubElement(channel, '{http://www.w3.org/2005/Atom}link')
-    atom_link.set('href', 'https://example.com/jw_feed.xml')
+    atom_link.set('href', FEED_URL)
     atom_link.set('rel', 'self')
     atom_link.set('type', 'application/rss+xml')
 
@@ -225,8 +234,17 @@ def main():
     print(f"Loaded {len(history)} previously processed items")
 
     # Initialize browser
-    driver = webdriver.Chrome()
-    driver.minimize_window()
+    driver = None
+    try:
+        if USE_WEBDRIVER_MANAGER:
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+        else:
+            driver = webdriver.Chrome()
+        driver.minimize_window()
+    except WebDriverException as e:
+        print(f"Error initializing browser: {e}")
+        print("Make sure Chrome and ChromeDriver are installed.")
+        return
 
     try:
         # Scrape content
@@ -239,7 +257,8 @@ def main():
         print(f"Found {len(books)} new books")
 
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
 
     # Scrape news (doesn't need Selenium)
     print("Scraping latest news...")
