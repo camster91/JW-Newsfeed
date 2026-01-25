@@ -1,9 +1,9 @@
 import datetime
 
-with open("C:\Python JW News\\bible.txt") as f:
+with open(r"C:\Python JW News\bible.txt") as f:
     bible = lines = f.readlines()
 
-with open("C:\Python JW News\\days.txt") as f:
+with open(r"C:\Python JW News\days.txt") as f:
     reading_links = lines = f.readlines()
 
 x = datetime.datetime.now()

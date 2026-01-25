@@ -36,8 +36,8 @@ history = []
 try:
     with open('C:\\Python JW News\\history.json') as f:
         history = json.load(f)
-except:
-    print("File empty") 
+except (FileNotFoundError, json.JSONDecodeError):
+    print("File empty or invalid") 
                     
 for link in soup.find_all("div", {"class":"synopsis lss desc showImgOverlay hasDuration jsLanguageAttributes dir-ltr lang-en ml-E ms-ROMAN"}):
     href = link.a['href']
@@ -67,8 +67,8 @@ WebDriverWait(driver,100).until(EC.presence_of_element_located(
 try:
     with open('C:\\Python JW News\\history.json') as f:
         history = json.load(f)
-except:
-    print("File empty") 
+except (FileNotFoundError, json.JSONDecodeError):
+    print("File empty or invalid") 
 
 html = driver.page_source
 soup = BeautifulSoup(html, 'html.parser')
@@ -99,10 +99,10 @@ for pic in soup.find_all("div", {"class":"cvr-wrapper"}):
 d = feedparser.parse('https://www.jw.org/en/whats-new/rss/WhatsNewWebArticles/feed.xml')
 
 try:
-   with open('C:\\Python JW News\\history.json') as f:
+    with open('C:\\Python JW News\\history.json') as f:
         history = json.load(f)
-except:
-    print("File empty")
+except (FileNotFoundError, json.JSONDecodeError):
+    print("File empty or invalid")
 
 for entry in d.entries:
     news_dict = {}
@@ -115,7 +115,7 @@ for entry in d.entries:
     try:
         news_img = entry.summary.split('=')[3].split(' ')[0].replace('"', '')
         news_dict['Image'] = news_img
-    except:
+    except (IndexError, AttributeError):
         news_dict['Image'] = ""
 
     if news_link not in history:
@@ -155,52 +155,51 @@ script_list = reading_links[slice_of_year]
 
 today = x.strftime("%A, %B, %d")
 
-reading += open("C:\\Python JW News\\reading.html").read().format(Script=script_list, Day=day_list, YearDay=day_of_year, Today=today)
+with open("C:\\Python JW News\\reading.html") as f:
+    reading += f.read().format(Script=script_list, Day=day_list, YearDay=day_of_year, Today=today)
 
 reading = "<tr><td class='content'><h1>Read the Bible Daily</h1>" + reading + "</td></tr>"
 
-for i in videos_list:
-    videos += open("C:\\Python JW News\\video.html").read().format(Text1=videos_list[count]['Title'], 
-                                            Link1=videos_list[count]['Link'], 
-                                            Img1=videos_list[count]['Image'])
-    count += 1
+with open("C:\\Python JW News\\video.html") as f:
+    video_template = f.read()
+for video in videos_list:
+    videos += video_template.format(Text1=video['Title'],
+                                    Link1=video['Link'],
+                                    Img1=video['Image'])
 
-count = 0
-
-if videos_list != []:
+if videos_list:
     videos = "<tr><td class='content'><h1>Latest Videos</h1>" + videos + "</td></tr>"
 
-for i in news_list:
-    news += open("C:\\Python JW News\\news.html").read().format(Text2=news_list[count]['Title'], 
-                                            Link2=news_list[count]['Link'], 
-                                            Img2=news_list[count]['Image'])
-    count += 1
+with open("C:\\Python JW News\\news.html") as f:
+    news_template = f.read()
+for news_item in news_list:
+    news += news_template.format(Text2=news_item['Title'],
+                                 Link2=news_item['Link'],
+                                 Img2=news_item['Image'])
 
-count = 0
-
-if news_list != []:
+if news_list:
     news = "<tr><td class='content'><h1>Latest News</h1>" + news + "</td></tr>"
 
-for i in book_list:
-    books += open("C:\\Python JW News\\books.html").read().format(Text3=book_list[count]['Title'], 
-                                            Link3=book_list[count]['Link'], 
-                                            Img3=pics_list[count])
-    count += 1
+with open("C:\\Python JW News\\books.html") as f:
+    books_template = f.read()
+for idx, book in enumerate(book_list):
+    if idx < len(pics_list):
+        books += books_template.format(Text3=book['Title'],
+                                       Link3=book['Link'],
+                                       Img3=pics_list[idx])
 
-count = 0
-
-if book_list != []:
+if book_list:
     books = "<tr><td class='content'><h1>Latest Books</h1>" + books + "</td></tr>"
 
 
 
-end = open("C:\\Python JW News\\end.html").read()
+with open("C:\\Python JW News\\end.html") as f:
+    end = f.read()
 
-emails = []
 email_list = []
 
-text = open("C:\\Python JW News\\email_list.txt", "r")
-emails = text.readlines()
+with open("C:\\Python JW News\\email_list.txt", "r") as f:
+    emails = f.readlines()
 
 for line in emails:
     email_list.append(line.strip())
@@ -216,8 +215,9 @@ msg['From'] = me
 msg['To'] = you
 
 text = "HTML only. Please enable HTML email."
-        
-html = open("C:\\Python JW News\\main.html").read() + reading + videos + news + books + none + end
+
+with open("C:\\Python JW News\\main.html") as f:
+    html = f.read() + reading + videos + news + books + none + end
 
 part1 = MIMEText(text, 'plain')
 part2 = MIMEText(html, 'html')
@@ -227,13 +227,16 @@ part2 = MIMEText(html, 'html')
 msg.attach(part1)
 msg.attach(part2)
 
-mail = smtplib.SMTP('smtp-relay.sendinblue.com:587')
-
-#mail.ehlo()
+# Configure SMTP using environment variables:
+# SMTP_HOST: SMTP server (default: in-v3.mailjet.com)
+# SMTP_USERNAME: API Key from Mailjet
+# SMTP_PASSWORD: Secret Key from Mailjet
+smtp_host = os.environ.get('SMTP_HOST', 'in-v3.mailjet.com')
+mail = smtplib.SMTP(smtp_host, 587)
 
 mail.starttls()
 
-mail.login('camster91@gmail.com', '0h65mJPSk7Iz4Dwn')
+mail.login(os.environ.get('SMTP_USERNAME', ''), os.environ.get('SMTP_PASSWORD', ''))
 mail.sendmail(me, [you] + them, msg.as_string())
 mail.quit()
 

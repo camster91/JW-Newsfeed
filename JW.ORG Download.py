@@ -175,9 +175,6 @@ def main():
 
             process_video(driver, title, target_folder, session, MAX_RETRIES)
 
-            # After processing the video, stop further processing of other videos and move to the next URL
-            break  # Move to the next URL after processing the first video
-
         driver.quit()  # Ensure the driver quits after processing videos for each URL
 
     logging.info("Done!")
