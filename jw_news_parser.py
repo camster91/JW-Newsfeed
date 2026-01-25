@@ -1,243 +1,266 @@
-import smtplib
+"""
+JW.ORG RSS Feed Generator
+
+Scrapes JW.ORG for latest videos, books, and news articles,
+then generates an RSS 2.0 feed that can be consumed by feed readers.
+"""
+
 import feedparser
 import os
-import datetime
 import json
+import datetime
+import xml.etree.ElementTree as ET
+from xml.dom import minidom
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from selenium import webdriver
 
-driver = webdriver.Chrome()
+# Configuration - use environment variables or defaults
+DATA_DIR = os.environ.get('JW_DATA_DIR', os.path.dirname(os.path.abspath(__file__)))
+OUTPUT_DIR = os.environ.get('JW_OUTPUT_DIR', os.path.dirname(os.path.abspath(__file__)))
+HISTORY_FILE = os.path.join(DATA_DIR, 'history.json')
+OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'jw_feed.xml')
 
-driver.get('https://www.jw.org/en/library/videos/#en/categories/LatestVideos')
 
-os.environ['WDM_LOG_LEVEL'] = '0'
+def load_history():
+    """Load previously processed items from history file."""
+    try:
+        with open(HISTORY_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
 
-driver.minimize_window()
 
-driver.get('https://www.jw.org/en/library/videos/#en/categories/LatestVideos')
+def save_history(history):
+    """Save processed items to history file."""
+    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+        json.dump(history, f, ensure_ascii=False, indent=4)
 
-WebDriverWait(driver,100).until(EC.presence_of_element_located(
-        (By.CLASS_NAME, "contentArea"))) 
 
-html = driver.page_source
-soup = BeautifulSoup(html, 'html.parser')
+def scrape_videos(driver, history):
+    """Scrape latest videos from JW.ORG."""
+    videos_list = []
 
-videos_list = []
-book_list = []
-pics_list = []
-news_list = []
-history = []
+    driver.get('https://www.jw.org/en/library/videos/#en/categories/LatestVideos')
+    WebDriverWait(driver, 60).until(
+        EC.presence_of_element_located((By.CLASS_NAME, "contentArea"))
+    )
 
-try:
-    with open('C:\\Python JW News\\history.json') as f:
-        history = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    print("File empty or invalid") 
-                    
-for link in soup.find_all("div", {"class":"synopsis lss desc showImgOverlay hasDuration jsLanguageAttributes dir-ltr lang-en ml-E ms-ROMAN"}):
-    href = link.a['href']
-    text = link.find_all('a', {'class':'jsNoScroll'})[1].text
-    image = link.img['src']
+    soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-    links_dict = {}
-    links_dict['Title'] = text
-    links_dict['Image'] = image
-    links_dict['Link'] = href
+    for link in soup.find_all("div", {"class": "synopsis lss desc showImgOverlay hasDuration jsLanguageAttributes dir-ltr lang-en ml-E ms-ROMAN"}):
+        try:
+            href = link.a['href']
+            if not href.startswith('http'):
+                href = 'https://www.jw.org' + href
 
-    if href not in history:
+            text = link.find_all('a', {'class': 'jsNoScroll'})[1].text
+            image = link.img['src']
 
-        videos_list.append(links_dict)
-        history.append(href)
+            if href not in history:
+                videos_list.append({
+                    'title': text,
+                    'link': href,
+                    'image': image,
+                    'category': 'video'
+                })
+                history.append(href)
+        except (KeyError, IndexError, AttributeError):
+            continue
 
-        with open('C:\\Python JW News\\history.json', 'w', encoding='utf-8') as f:
-            json.dump(history, f, ensure_ascii=False, indent=4)
-    else:
-        continue
+    return videos_list
 
-driver.get('https://www.jw.org/en/library/books')
 
-WebDriverWait(driver,100).until(EC.presence_of_element_located(
-        (By.ID, "pubsViewResults"))) 
+def scrape_books(driver, history):
+    """Scrape latest books from JW.ORG."""
+    book_list = []
+    pics_list = []
 
-try:
-    with open('C:\\Python JW News\\history.json') as f:
-        history = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    print("File empty or invalid") 
+    driver.get('https://www.jw.org/en/library/books')
+    WebDriverWait(driver, 60).until(
+        EC.presence_of_element_located((By.ID, "pubsViewResults"))
+    )
 
-html = driver.page_source
-soup = BeautifulSoup(html, 'html.parser')
+    soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-for link in  soup.find_all("div", {"class":"publicationDesc"}):
-    href = "https://www.jw.org" + link.a['href']
-    title = link.text.strip()
+    for link in soup.find_all("div", {"class": "publicationDesc"}):
+        try:
+            href = "https://www.jw.org" + link.a['href']
+            title = link.text.strip()
 
-    books_dict = {}
-    books_dict['Link'] = href
-    books_dict['Title'] = title
+            if href not in history:
+                book_list.append({
+                    'title': title,
+                    'link': href,
+                    'category': 'book'
+                })
+                history.append(href)
+        except (KeyError, AttributeError):
+            continue
 
-    if href not in history:
+    # Get book cover images
+    for pic in soup.find_all("div", {"class": "cvr-wrapper"}):
+        try:
+            pics_list.append(pic.img['src'])
+        except (KeyError, AttributeError):
+            continue
 
-        book_list.append(books_dict)
-        history.append(href)
+    # Associate images with books
+    for idx, book in enumerate(book_list):
+        if idx < len(pics_list):
+            book['image'] = pics_list[idx]
+        else:
+            book['image'] = ''
 
-        with open('C:\\Python JW News\\history.json', 'w', encoding='utf-8') as f:
-            json.dump(history, f, ensure_ascii=False, indent=4)
-    else:
-        continue
+    return book_list
 
-for pic in soup.find_all("div", {"class":"cvr-wrapper"}):
-    image = pic.img['src']
 
-    pics_list.append(image)
+def scrape_news(history):
+    """Scrape latest news from JW.ORG RSS feed."""
+    news_list = []
 
-d = feedparser.parse('https://www.jw.org/en/whats-new/rss/WhatsNewWebArticles/feed.xml')
+    feed = feedparser.parse('https://www.jw.org/en/whats-new/rss/WhatsNewWebArticles/feed.xml')
 
-try:
-    with open('C:\\Python JW News\\history.json') as f:
-        history = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    print("File empty or invalid")
+    for entry in feed.entries:
+        news_link = entry.link
 
-for entry in d.entries:
-    news_dict = {}
-    news_title = entry.title
-    news_link = entry.link
+        if news_link not in history:
+            # Try to extract image from summary
+            try:
+                news_img = entry.summary.split('=')[3].split(' ')[0].replace('"', '')
+            except (IndexError, AttributeError):
+                news_img = ''
 
-    news_dict['Link'] = news_link
-    news_dict['Title'] = news_title
+            news_list.append({
+                'title': entry.title,
+                'link': news_link,
+                'image': news_img,
+                'category': 'news',
+                'description': getattr(entry, 'summary', ''),
+                'pub_date': getattr(entry, 'published', '')
+            })
+            history.append(news_link)
+
+    return news_list
+
+
+def generate_rss_feed(videos, books, news):
+    """Generate RSS 2.0 feed from scraped content."""
+
+    # Create root RSS element
+    rss = ET.Element('rss', version='2.0')
+    rss.set('xmlns:media', 'http://search.yahoo.com/mrss/')
+    rss.set('xmlns:atom', 'http://www.w3.org/2005/Atom')
+
+    channel = ET.SubElement(rss, 'channel')
+
+    # Channel metadata
+    ET.SubElement(channel, 'title').text = 'JW.ORG Updates'
+    ET.SubElement(channel, 'link').text = 'https://www.jw.org'
+    ET.SubElement(channel, 'description').text = 'Latest videos, books, and news from JW.ORG'
+    ET.SubElement(channel, 'language').text = 'en'
+    ET.SubElement(channel, 'lastBuildDate').text = datetime.datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
+
+    # Add atom:link for feed URL (self-reference)
+    atom_link = ET.SubElement(channel, '{http://www.w3.org/2005/Atom}link')
+    atom_link.set('href', 'https://example.com/jw_feed.xml')
+    atom_link.set('rel', 'self')
+    atom_link.set('type', 'application/rss+xml')
+
+    # Add all items
+    all_items = []
+
+    for video in videos:
+        all_items.append(('video', video))
+
+    for book in books:
+        all_items.append(('book', book))
+
+    for article in news:
+        all_items.append(('news', article))
+
+    for item_type, item_data in all_items:
+        item = ET.SubElement(channel, 'item')
+
+        ET.SubElement(item, 'title').text = item_data.get('title', '')
+        ET.SubElement(item, 'link').text = item_data.get('link', '')
+        ET.SubElement(item, 'guid', isPermaLink='true').text = item_data.get('link', '')
+        ET.SubElement(item, 'category').text = item_type.capitalize()
+
+        # Add description
+        description = item_data.get('description', '')
+        if not description:
+            description = f"New {item_type}: {item_data.get('title', '')}"
+        ET.SubElement(item, 'description').text = description
+
+        # Add publication date
+        pub_date = item_data.get('pub_date', '')
+        if not pub_date:
+            pub_date = datetime.datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
+        ET.SubElement(item, 'pubDate').text = pub_date
+
+        # Add media thumbnail if image exists
+        if item_data.get('image'):
+            media_thumb = ET.SubElement(item, '{http://search.yahoo.com/mrss/}thumbnail')
+            media_thumb.set('url', item_data['image'])
+
+    return rss
+
+
+def prettify_xml(elem):
+    """Return a pretty-printed XML string."""
+    rough_string = ET.tostring(elem, encoding='unicode')
+    reparsed = minidom.parseString(rough_string)
+    return reparsed.toprettyxml(indent='  ')
+
+
+def main():
+    """Main function to scrape JW.ORG and generate RSS feed."""
+    print("Starting JW.ORG RSS Feed Generator...")
+
+    # Load history
+    history = load_history()
+    print(f"Loaded {len(history)} previously processed items")
+
+    # Initialize browser
+    driver = webdriver.Chrome()
+    driver.minimize_window()
 
     try:
-        news_img = entry.summary.split('=')[3].split(' ')[0].replace('"', '')
-        news_dict['Image'] = news_img
-    except (IndexError, AttributeError):
-        news_dict['Image'] = ""
+        # Scrape content
+        print("Scraping latest videos...")
+        videos = scrape_videos(driver, history)
+        print(f"Found {len(videos)} new videos")
 
-    if news_link not in history:
+        print("Scraping latest books...")
+        books = scrape_books(driver, history)
+        print(f"Found {len(books)} new books")
 
-        news_list.append(news_dict)
-        history.append(news_link)
+    finally:
+        driver.quit()
 
-        with open('C:\\Python JW News\\history.json', 'w', encoding='utf-8') as f:
-            json.dump(history, f, ensure_ascii=False, indent=4)
-    else:
-        continue
+    # Scrape news (doesn't need Selenium)
+    print("Scraping latest news...")
+    news = scrape_news(history)
+    print(f"Found {len(news)} new articles")
 
-videos = ""
-news = ""
-books = ""
-reading = ""
-none = ""
-count = 0
+    # Save updated history
+    save_history(history)
 
-with open("C:\\Python JW News\\bible.txt") as f:
-    bible = lines = f.readlines()
+    # Generate RSS feed
+    print("Generating RSS feed...")
+    rss = generate_rss_feed(videos, books, news)
 
-with open("C:\\Python JW News\\days.txt") as f:
-    reading_links = lines = f.readlines()
+    # Write to file
+    xml_content = prettify_xml(rss)
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        f.write(xml_content)
 
-x = datetime.datetime.now()
-
-day_of_year = x.strftime("%j")
-
-day_of_year = int(day_of_year)
-
-slice_of_year = day_of_year - 1
-
-day_list = bible[slice_of_year]
-
-script_list = reading_links[slice_of_year]
-
-today = x.strftime("%A, %B, %d")
-
-with open("C:\\Python JW News\\reading.html") as f:
-    reading += f.read().format(Script=script_list, Day=day_list, YearDay=day_of_year, Today=today)
-
-reading = "<tr><td class='content'><h1>Read the Bible Daily</h1>" + reading + "</td></tr>"
-
-with open("C:\\Python JW News\\video.html") as f:
-    video_template = f.read()
-for video in videos_list:
-    videos += video_template.format(Text1=video['Title'],
-                                    Link1=video['Link'],
-                                    Img1=video['Image'])
-
-if videos_list:
-    videos = "<tr><td class='content'><h1>Latest Videos</h1>" + videos + "</td></tr>"
-
-with open("C:\\Python JW News\\news.html") as f:
-    news_template = f.read()
-for news_item in news_list:
-    news += news_template.format(Text2=news_item['Title'],
-                                 Link2=news_item['Link'],
-                                 Img2=news_item['Image'])
-
-if news_list:
-    news = "<tr><td class='content'><h1>Latest News</h1>" + news + "</td></tr>"
-
-with open("C:\\Python JW News\\books.html") as f:
-    books_template = f.read()
-for idx, book in enumerate(book_list):
-    if idx < len(pics_list):
-        books += books_template.format(Text3=book['Title'],
-                                       Link3=book['Link'],
-                                       Img3=pics_list[idx])
-
-if book_list:
-    books = "<tr><td class='content'><h1>Latest Books</h1>" + books + "</td></tr>"
+    print(f"RSS feed saved to: {OUTPUT_FILE}")
+    print(f"Total new items: {len(videos) + len(books) + len(news)}")
 
 
-
-with open("C:\\Python JW News\\end.html") as f:
-    end = f.read()
-
-email_list = []
-
-with open("C:\\Python JW News\\email_list.txt", "r") as f:
-    emails = f.readlines()
-
-for line in emails:
-    email_list.append(line.strip())
-    
-me = "JW Newsfeed <jworgnewsfeed@gmail.com>"
-you = "jworgnewsfeed@gmail.com"
-#them = ["camster91@gmail.com"]
-them = email_list
-
-msg = MIMEMultipart('alternative')
-msg['Subject'] = "JW.ORG Update"
-msg['From'] = me
-msg['To'] = you
-
-text = "HTML only. Please enable HTML email."
-
-with open("C:\\Python JW News\\main.html") as f:
-    html = f.read() + reading + videos + news + books + none + end
-
-part1 = MIMEText(text, 'plain')
-part2 = MIMEText(html, 'html')
-
-#if news_list or videos_list or book_list != []:
-    
-msg.attach(part1)
-msg.attach(part2)
-
-# Configure SMTP using environment variables:
-# SMTP_HOST: SMTP server (default: in-v3.mailjet.com)
-# SMTP_USERNAME: API Key from Mailjet
-# SMTP_PASSWORD: Secret Key from Mailjet
-smtp_host = os.environ.get('SMTP_HOST', 'in-v3.mailjet.com')
-mail = smtplib.SMTP(smtp_host, 587)
-
-mail.starttls()
-
-mail.login(os.environ.get('SMTP_USERNAME', ''), os.environ.get('SMTP_PASSWORD', ''))
-mail.sendmail(me, [you] + them, msg.as_string())
-mail.quit()
-
-driver.quit()
+if __name__ == '__main__':
+    main()

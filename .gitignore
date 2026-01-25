@@ -17,3 +17,10 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+scraping.log
+
+# Generated output
+jw_feed.xml
