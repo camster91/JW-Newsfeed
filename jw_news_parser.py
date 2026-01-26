@@ -197,7 +197,7 @@ def generate_rss_feed(videos, books, news):
     ET.SubElement(channel, 'link').text = 'https://www.jw.org'
     ET.SubElement(channel, 'description').text = 'Latest videos, books, and news from JW.ORG'
     ET.SubElement(channel, 'language').text = 'en'
-    ET.SubElement(channel, 'lastBuildDate').text = datetime.datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
+    ET.SubElement(channel, 'lastBuildDate').text = datetime.datetime.now(datetime.UTC).strftime('%a, %d %b %Y %H:%M:%S +0000')
 
     # Add atom:link for feed URL (self-reference)
     atom_link = ET.SubElement(channel, '{http://www.w3.org/2005/Atom}link')
@@ -234,7 +234,7 @@ def generate_rss_feed(videos, books, news):
         # Add publication date
         pub_date = item_data.get('pub_date', '')
         if not pub_date:
-            pub_date = datetime.datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
+            pub_date = datetime.datetime.now(datetime.UTC).strftime('%a, %d %b %Y %H:%M:%S +0000')
         ET.SubElement(item, 'pubDate').text = pub_date
 
         # Add media thumbnail if image exists
