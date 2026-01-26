@@ -40,7 +40,7 @@
   <Actions Context="Author">
     <Exec>
       <Command>pythonw.exe</Command>
-      <Arguments>C:\Users\camst\JW-Newsfeed\jw_news_parser.py</Arguments>
+      <Arguments>C:\Users\camst\JW-Newsfeed\update_and_publish.py</Arguments>
       <WorkingDirectory>C:\Users\camst\JW-Newsfeed</WorkingDirectory>
     </Exec>
   </Actions>

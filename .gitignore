@@ -23,4 +23,4 @@ Thumbs.db
 scraping.log
 
 # Generated output
-jw_feed.xml
+# jw_feed.xml  # Now tracked for GitHub Pages
