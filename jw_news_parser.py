@@ -1,11 +1,12 @@
 """
 JW.ORG RSS Feed Generator
 
-Scrapes JW.ORG for latest videos, books, and news articles,
+Scrapes JW.ORG for latest videos, books, and news articles using Selenium,
 then generates an RSS 2.0 feed that can be consumed by feed readers.
+
+All content is scraped directly from web pages - no external RSS feeds are used.
 """
 
-import feedparser
 import os
 import json
 import datetime
@@ -130,36 +131,53 @@ def scrape_books(driver, history):
     return book_list, new_count
 
 
-def scrape_news(history):
-    """Scrape latest news from JW.ORG RSS feed. Returns all news and count of new ones."""
+def scrape_news(driver, history):
+    """Scrape latest news from JW.ORG news page. Returns all news and count of new ones."""
     news_list = []
     new_count = 0
 
-    feed = feedparser.parse('https://www.jw.org/en/whats-new/rss/WhatsNewWebArticles/feed.xml')
+    driver.get('https://www.jw.org/en/news/')
+    WebDriverWait(driver, 60).until(
+        EC.presence_of_element_located((By.CLASS_NAME, "synopsis"))
+    )
 
-    for entry in feed.entries:
-        news_link = entry.link
+    soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-        # Try to extract image from summary
+    for article in soup.find_all("div", {"class": "synopsis"}):
         try:
-            news_img = entry.summary.split('=')[3].split(' ')[0].replace('"', '')
-        except (IndexError, AttributeError):
-            news_img = ''
+            link_elem = article.find('a')
+            if not link_elem:
+                continue
 
-        is_new = news_link not in history
-        if is_new:
-            history.add(news_link)
-            new_count += 1
+            href = link_elem.get('href', '')
+            if not href.startswith('http'):
+                href = 'https://www.jw.org' + href
 
-        news_list.append({
-            'title': entry.title,
-            'link': news_link,
-            'image': news_img,
-            'category': 'news',
-            'description': getattr(entry, 'summary', ''),
-            'pub_date': getattr(entry, 'published', ''),
-            'is_new': is_new
-        })
+            title_elem = article.find(['h3', 'h2', 'span'])
+            title = title_elem.text.strip() if title_elem else ''
+
+            img_elem = article.find('img')
+            image = img_elem.get('src', '') if img_elem else ''
+
+            desc_elem = article.find('p')
+            description = desc_elem.text.strip() if desc_elem else ''
+
+            is_new = href not in history
+            if is_new:
+                history.add(href)
+                new_count += 1
+
+            news_list.append({
+                'title': title,
+                'link': href,
+                'image': image,
+                'category': 'news',
+                'description': description,
+                'pub_date': '',
+                'is_new': is_new
+            })
+        except (KeyError, AttributeError):
+            continue
 
     return news_list, new_count
 
@@ -265,14 +283,13 @@ def main():
         books, new_books = scrape_books(driver, history)
         print(f"Found {len(books)} books ({new_books} new)")
 
+        print("Scraping latest news...")
+        news, new_news = scrape_news(driver, history)
+        print(f"Found {len(news)} articles ({new_news} new)")
+
     finally:
         if driver:
             driver.quit()
-
-    # Scrape news (doesn't need Selenium)
-    print("Scraping latest news...")
-    news, new_news = scrape_news(history)
-    print(f"Found {len(news)} articles ({new_news} new)")
 
     # Save updated history
     save_history(history)
