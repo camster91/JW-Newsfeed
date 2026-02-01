@@ -1,10 +1,10 @@
 """
 JW.ORG RSS Feed Generator
 
-Scrapes JW.ORG for latest videos, books, and news articles using Selenium,
+Scrapes JW.ORG "What's New" page for the latest content using Selenium,
 then generates an RSS 2.0 feed that can be consumed by feed readers.
 
-All content is scraped directly from web pages - no external RSS feeds are used.
+All content is scraped directly from the What's New page in release order.
 """
 
 import os
@@ -26,19 +26,47 @@ try:
 except ImportError:
     USE_WEBDRIVER_MANAGER = False
 
-# Configuration - use environment variables or defaults
+try:
+    from win10toast import ToastNotifier
+    TOAST_AVAILABLE = True
+except ImportError:
+    TOAST_AVAILABLE = False
+
+
+def send_notification(title, message, error=False):
+    """Send a Windows toast notification."""
+    if not TOAST_AVAILABLE:
+        return
+    try:
+        toaster = ToastNotifier()
+        toaster.show_toast(
+            title,
+            message,
+            duration=10,
+            threaded=True
+        )
+    except Exception:
+        pass
+
+
+# Configuration
 DATA_DIR = os.environ.get('JW_DATA_DIR', os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.environ.get('JW_OUTPUT_DIR', os.path.dirname(os.path.abspath(__file__)))
 HISTORY_FILE = os.path.join(DATA_DIR, 'history.json')
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'jw_feed.xml')
-FEED_URL = os.environ.get('JW_FEED_URL', 'https://example.com/jw_feed.xml')
+FEED_URL = os.environ.get('JW_FEED_URL', 'https://camster91.github.io/JW-Newsfeed/jw_feed.xml')
 
 
 def load_history():
     """Load previously processed items from history file."""
     try:
         with open(HISTORY_FILE) as f:
-            return set(json.load(f))
+            data = json.load(f)
+            if isinstance(data, list):
+                return set(data)
+            elif isinstance(data, dict):
+                return set(data.keys())
+            return set()
     except (FileNotFoundError, json.JSONDecodeError):
         return set()
 
@@ -49,94 +77,21 @@ def save_history(history):
         json.dump(list(history), f, ensure_ascii=False, indent=4)
 
 
-def scrape_videos(driver, history):
-    """Scrape latest videos from JW.ORG. Returns all videos and count of new ones."""
-    videos_list = []
+def parse_date(date_str):
+    """Parse date string like '2026-01-30' to RFC 822 format."""
+    try:
+        dt = datetime.datetime.strptime(date_str.strip(), '%Y-%m-%d')
+        return dt.strftime('%a, %d %b %Y 12:00:00 +0000')
+    except ValueError:
+        return datetime.datetime.now(datetime.UTC).strftime('%a, %d %b %Y %H:%M:%S +0000')
+
+
+def scrape_whats_new(driver, history):
+    """Scrape the What's New page from JW.ORG. Returns items in release order."""
+    items_list = []
     new_count = 0
 
-    driver.get('https://www.jw.org/en/library/videos/#en/categories/LatestVideos')
-    WebDriverWait(driver, 60).until(
-        EC.presence_of_element_located((By.CLASS_NAME, "contentArea"))
-    )
-
-    soup = BeautifulSoup(driver.page_source, 'html.parser')
-
-    for link in soup.find_all("div", {"class": "synopsis lss desc showImgOverlay hasDuration jsLanguageAttributes dir-ltr lang-en ml-E ms-ROMAN"}):
-        try:
-            href = link.a['href']
-            if not href.startswith('http'):
-                href = 'https://www.jw.org' + href
-
-            text = link.find_all('a', {'class': 'jsNoScroll'})[1].text
-            image = link.img['src']
-
-            is_new = href not in history
-            if is_new:
-                history.add(href)
-                new_count += 1
-
-            videos_list.append({
-                'title': text,
-                'link': href,
-                'image': image,
-                'category': 'video',
-                'is_new': is_new
-            })
-        except (KeyError, IndexError, AttributeError):
-            continue
-
-    return videos_list, new_count
-
-
-def scrape_books(driver, history):
-    """Scrape latest books from JW.ORG. Returns all books and count of new ones."""
-    book_list = []
-    pics_list = []
-    new_count = 0
-
-    driver.get('https://www.jw.org/en/library/books')
-    WebDriverWait(driver, 60).until(
-        EC.presence_of_element_located((By.ID, "pubsViewResults"))
-    )
-
-    soup = BeautifulSoup(driver.page_source, 'html.parser')
-
-    # Get book cover images first
-    for pic in soup.find_all("div", {"class": "cvr-wrapper"}):
-        try:
-            pics_list.append(pic.img['src'])
-        except (KeyError, AttributeError):
-            continue
-
-    for idx, link in enumerate(soup.find_all("div", {"class": "publicationDesc"})):
-        try:
-            href = "https://www.jw.org" + link.a['href']
-            title = link.text.strip()
-
-            is_new = href not in history
-            if is_new:
-                history.add(href)
-                new_count += 1
-
-            book_list.append({
-                'title': title,
-                'link': href,
-                'image': pics_list[idx] if idx < len(pics_list) else '',
-                'category': 'book',
-                'is_new': is_new
-            })
-        except (KeyError, AttributeError):
-            continue
-
-    return book_list, new_count
-
-
-def scrape_news(driver, history):
-    """Scrape latest news from JW.ORG news page. Returns all news and count of new ones."""
-    news_list = []
-    new_count = 0
-
-    driver.get('https://www.jw.org/en/news/')
+    driver.get('https://www.jw.org/en/whats-new/')
     WebDriverWait(driver, 60).until(
         EC.presence_of_element_located((By.CLASS_NAME, "synopsis"))
     )
@@ -150,94 +105,99 @@ def scrape_news(driver, history):
                 continue
 
             href = link_elem.get('href', '')
+            if not href:
+                continue
             if not href.startswith('http'):
                 href = 'https://www.jw.org' + href
 
-            title_elem = article.find(['h3', 'h2', 'span'])
+            # Skip duplicates within this scrape
+            if href in [item['link'] for item in items_list]:
+                continue
+
+            # Get title
+            title_elem = article.find('h3')
+            if not title_elem:
+                title_elem = article.find('h2')
             title = title_elem.text.strip() if title_elem else ''
+            if not title:
+                continue
 
+            # Get image
             img_elem = article.find('img')
-            image = img_elem.get('src', '') if img_elem else ''
+            image = ''
+            if img_elem:
+                image = img_elem.get('src', '') or img_elem.get('data-src', '')
 
-            desc_elem = article.find('p')
-            description = desc_elem.text.strip() if desc_elem else ''
+            # Get date from contextTtl
+            date_elem = article.find('p', class_='contextTtl')
+            date_str = date_elem.text.strip() if date_elem else ''
+            pub_date = parse_date(date_str) if date_str else None
+
+            # Detect if it's a video (has hasDuration class)
+            classes = article.get('class', [])
+            is_video = 'hasDuration' in classes
+            category = 'Video' if is_video else 'Article'
+
+            # Generate description
+            if is_video:
+                # Get duration if available
+                duration_elem = article.find('span', class_='syn-img-overlay-text')
+                duration = duration_elem.text.strip() if duration_elem else ''
+                description = f"Video{' (' + duration + ')' if duration else ''}: {title}"
+            else:
+                description = title
 
             is_new = href not in history
             if is_new:
                 history.add(href)
                 new_count += 1
 
-            news_list.append({
+            items_list.append({
                 'title': title,
                 'link': href,
                 'image': image,
-                'category': 'news',
+                'category': category,
                 'description': description,
-                'pub_date': '',
+                'pub_date': pub_date,
                 'is_new': is_new
             })
         except (KeyError, AttributeError):
             continue
 
-    return news_list, new_count
+    return items_list, new_count
 
 
-def generate_rss_feed(videos, books, news):
+def generate_rss_feed(items):
     """Generate RSS 2.0 feed from scraped content."""
-
-    # Create root RSS element
     rss = ET.Element('rss', version='2.0')
     rss.set('xmlns:media', 'http://search.yahoo.com/mrss/')
     rss.set('xmlns:atom', 'http://www.w3.org/2005/Atom')
 
     channel = ET.SubElement(rss, 'channel')
 
-    # Channel metadata
-    ET.SubElement(channel, 'title').text = 'JW.ORG Updates'
-    ET.SubElement(channel, 'link').text = 'https://www.jw.org'
-    ET.SubElement(channel, 'description').text = 'Latest videos, books, and news from JW.ORG'
+    ET.SubElement(channel, 'title').text = "JW.ORG What's New"
+    ET.SubElement(channel, 'link').text = 'https://www.jw.org/en/whats-new/'
+    ET.SubElement(channel, 'description').text = 'Latest updates from JW.ORG'
     ET.SubElement(channel, 'language').text = 'en'
     ET.SubElement(channel, 'lastBuildDate').text = datetime.datetime.now(datetime.UTC).strftime('%a, %d %b %Y %H:%M:%S +0000')
 
-    # Add atom:link for feed URL (self-reference)
     atom_link = ET.SubElement(channel, '{http://www.w3.org/2005/Atom}link')
     atom_link.set('href', FEED_URL)
     atom_link.set('rel', 'self')
     atom_link.set('type', 'application/rss+xml')
 
-    # Add all items
-    all_items = []
-
-    for video in videos:
-        all_items.append(('video', video))
-
-    for book in books:
-        all_items.append(('book', book))
-
-    for article in news:
-        all_items.append(('news', article))
-
-    for item_type, item_data in all_items:
+    for item_data in items:
         item = ET.SubElement(channel, 'item')
 
         ET.SubElement(item, 'title').text = item_data.get('title', '')
         ET.SubElement(item, 'link').text = item_data.get('link', '')
         ET.SubElement(item, 'guid', isPermaLink='true').text = item_data.get('link', '')
-        ET.SubElement(item, 'category').text = item_type.capitalize()
+        ET.SubElement(item, 'category').text = item_data.get('category', 'Update')
+        ET.SubElement(item, 'description').text = item_data.get('description', '')
 
-        # Add description
-        description = item_data.get('description', '')
-        if not description:
-            description = f"New {item_type}: {item_data.get('title', '')}"
-        ET.SubElement(item, 'description').text = description
-
-        # Add publication date
-        pub_date = item_data.get('pub_date', '')
-        if not pub_date:
-            pub_date = datetime.datetime.now(datetime.UTC).strftime('%a, %d %b %Y %H:%M:%S +0000')
+        pub_date = item_data.get('pub_date') or datetime.datetime.now(datetime.UTC).strftime('%a, %d %b %Y %H:%M:%S +0000')
         ET.SubElement(item, 'pubDate').text = pub_date
 
-        # Add media thumbnail if image exists
         if item_data.get('image'):
             media_thumb = ET.SubElement(item, '{http://search.yahoo.com/mrss/}thumbnail')
             media_thumb.set('url', item_data['image'])
@@ -256,11 +216,9 @@ def main():
     """Main function to scrape JW.ORG and generate RSS feed."""
     print("Starting JW.ORG RSS Feed Generator...")
 
-    # Load history
     history = load_history()
     print(f"Loaded {len(history)} previously processed items")
 
-    # Initialize browser
     driver = None
     try:
         if USE_WEBDRIVER_MANAGER:
@@ -270,42 +228,42 @@ def main():
         driver.minimize_window()
     except WebDriverException as e:
         print(f"Error initializing browser: {e}")
-        print("Make sure Chrome and ChromeDriver are installed.")
+        send_notification("JW-Newsfeed Error", f"Browser error: {str(e)[:100]}", error=True)
         return
 
     try:
-        # Scrape content
-        print("Scraping latest videos...")
-        videos, new_videos = scrape_videos(driver, history)
-        print(f"Found {len(videos)} videos ({new_videos} new)")
+        print("Scraping What's New page...")
+        items, new_count = scrape_whats_new(driver, history)
+        print(f"Found {len(items)} items ({new_count} new)")
 
-        print("Scraping latest books...")
-        books, new_books = scrape_books(driver, history)
-        print(f"Found {len(books)} books ({new_books} new)")
-
-        print("Scraping latest news...")
-        news, new_news = scrape_news(driver, history)
-        print(f"Found {len(news)} articles ({new_news} new)")
+    except Exception as e:
+        print(f"ERROR: Scraping failed: {e}")
+        send_notification("JW-Newsfeed Error", f"Scraping failed: {str(e)[:100]}", error=True)
+        if driver:
+            driver.quit()
+        return
 
     finally:
         if driver:
             driver.quit()
 
-    # Save updated history
+    if not items:
+        print("ERROR: No items found! Feed not updated.")
+        send_notification("JW-Newsfeed Error", "No items found! Feed not updated.", error=True)
+        return
+
     save_history(history)
 
-    # Generate RSS feed with ALL items (not just new ones)
     print("Generating RSS feed...")
-    rss = generate_rss_feed(videos, books, news)
+    rss = generate_rss_feed(items)
 
-    # Write to file
     xml_content = prettify_xml(rss)
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         f.write(xml_content)
 
     print(f"RSS feed saved to: {OUTPUT_FILE}")
-    print(f"Total items in feed: {len(videos) + len(books) + len(news)}")
-    print(f"New items: {new_videos + new_books + new_news}")
+    print(f"Total items in feed: {len(items)}")
+    print(f"New items: {new_count}")
 
 
 if __name__ == '__main__':
