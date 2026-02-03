@@ -1,0 +1,62 @@
+name: Update RSS Feed
+
+on:
+  schedule:
+    # Runs every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+
+jobs:
+  update-feed:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for branch operations
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install dependencies
+        run: |
+          pip install selenium webdriver-manager beautifulsoup4
+
+      - name: Run RSS feed generator
+        run: python jw_news_parser.py
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if git diff --quiet jw_feed.xml; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push to main
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add jw_feed.xml history.json
+          git commit -m "Auto-update RSS feed"
+          git push origin main
+
+      - name: Update gh-pages branch
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          git checkout gh-pages
+          git checkout main -- jw_feed.xml
+          git add jw_feed.xml
+          git commit -m "Update RSS feed"
+          git push origin gh-pages
+          git checkout main
