@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Updates JW-Newsfeed RSS feed every 6 hours</Description>
+    <URI>\JW-Newsfeed-Updater</URI>
+  </RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+    </Principal>
+  </Principals>
+  <Settings>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>true</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+  </Settings>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-01-26T06:00:00</StartBoundary>
+      <Repetition>
+        <Interval>PT6H</Interval>
+      </Repetition>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\Users\camst\AppData\Local\Programs\Python\Python312\pythonw.exe</Command>
+      <Arguments>C:\Users\camst\JW-Newsfeed\update_and_publish.py</Arguments>
+      <WorkingDirectory>C:\Users\camst\JW-Newsfeed</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
