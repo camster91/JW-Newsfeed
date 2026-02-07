@@ -8,6 +8,7 @@ All content is scraped directly from the What's New page in release order.
 """
 
 import os
+import re
 import json
 import datetime
 import xml.etree.ElementTree as ET
@@ -78,12 +79,16 @@ def save_history(history):
 
 
 def parse_date(date_str):
-    """Parse date string like '2026-01-30' to RFC 822 format."""
-    try:
-        dt = datetime.datetime.strptime(date_str.strip(), '%Y-%m-%d')
-        return dt.strftime('%a, %d %b %Y 12:00:00 +0000')
-    except ValueError:
-        return datetime.datetime.now(datetime.UTC).strftime('%a, %d %b %Y %H:%M:%S +0000')
+    """Parse date string to RFC 822 format. Returns None if parsing fails."""
+    formats = ['%Y-%m-%d', '%B %d, %Y', '%b %d, %Y', '%d %B %Y', '%d %b %Y']
+    text = date_str.strip()
+    for fmt in formats:
+        try:
+            dt = datetime.datetime.strptime(text, fmt)
+            return dt.strftime('%a, %d %b %Y 12:00:00 +0000')
+        except ValueError:
+            continue
+    return None
 
 
 def scrape_whats_new(driver, history):
@@ -128,10 +133,17 @@ def scrape_whats_new(driver, history):
             if img_elem:
                 image = img_elem.get('src', '') or img_elem.get('data-src', '')
 
-            # Get date from contextTtl
+            # Get date - try contextTtl first, then search all text
+            pub_date = None
             date_elem = article.find('p', class_='contextTtl')
-            date_str = date_elem.text.strip() if date_elem else ''
-            pub_date = parse_date(date_str) if date_str else None
+            if date_elem:
+                pub_date = parse_date(date_elem.text.strip())
+            if not pub_date:
+                # Search for YYYY-MM-DD pattern anywhere in the article element
+                all_text = article.get_text()
+                date_match = re.search(r'\d{4}-\d{2}-\d{2}', all_text)
+                if date_match:
+                    pub_date = parse_date(date_match.group(0))
 
             # Detect if it's a video (has hasDuration class)
             classes = article.get('class', [])
